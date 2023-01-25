@@ -1,4 +1,4 @@
-// test.cpp : This file contains the 'main' function. Program execution begins and ends there.
+// udr.cpp : This file contains the 'main' function. Program execution begins and ends there.
 
 #include <iostream>
 #include <cmath>
@@ -248,13 +248,17 @@ int process_ini_LC79D_v1(const char* fname)
 			if (pvt_imu.fixtype > 0 && pvt_imu.nsat > 0 && (fabs(pvt_imu.lat) > 1.0e-10 || fabs(pvt_imu.lon) > 1.0e-10 || fabs(pvt_imu.ht) > 1.0e-10))
 			{	
 				//add_gps_data(gpsdata);
-				if (!fGPS) fGPS = set_output_file(fname, "gps.csv");
+				if (!fGPS)
+				{
+					fGPS = set_output_file(fname, "gps.csv");
+					if (fGPS) fprintf(fGPS, "MCU time when received PVT message[s], latitude [deg], longitude [deg], ht [m], GPS spped [m/s], GPS heading [deg], GPS accuracy [m], HDOP, PDOP, solution type, number of satellite, GPS week second\n");
+				}
 				if (!fPVT) fPVT = set_output_file(fname, "gps.nmea");
 
 				if (fGPS)
 				{
-					fprintf(fGPS, "%10.4f,%14.9f,%14.9f,%10.4f,%10.4f,%10.4f,%10.4f,%10.4f,%10.4f,%10.4f,%3i,%3i,%10.4f\n"
-						, pvt_imu.timegps, pvt_imu.lat * 180.0 / PI, pvt_imu.lon * 180.0 / PI, pvt_imu.ht, pvt_imu.speed, rate, pvt_imu.yaw * 180.0 / PI
+					fprintf(fGPS, "%10.4f,%14.9f,%14.9f,%10.4f,%10.4f,%10.4f,%10.4f,%10.4f,%10.4f,%3i,%3i,%10.4f\n"
+						, pvt_imu.timegps, pvt_imu.lat * 180.0 / PI, pvt_imu.lon * 180.0 / PI, pvt_imu.ht, pvt_imu.speed, pvt_imu.yaw * 180.0 / PI
 						, pvt_imu.accuracy, pvt_imu.hdop, pvt_imu.pdop
 						, pvt_imu.fixtype, pvt_imu.nsat, pvt_imu.weeksec
 					);
@@ -302,11 +306,13 @@ int process_ini_LC79D_v1(const char* fname)
 			pvt_imu.countodr = (float)(atof(val[8])); /* ODR counter */
 			pvt_imu.timeodr= (float)(atof(val[9])); /* ODR timer */
 
+			if (!fIMU)
+			{
+				fIMU = set_output_file(fname, "imu.csv");
+				if (fIMU) fprintf(fIMU, "IMU time[s], fx [g], fy[g], fz [g], wx [dps], wy [dps], wz [dps]\n");
+			}
 			/* 0: imu filter, Roll & Pitch only */
-			if (fIMU) fprintf(
-				fIMU, "%10.4f,%10.4f,%10.4f,%10.4f,%10.4f,%10.4f,%10.4f\n"
-				, pvt_imu.timeimu, pvt_imu.fxyz[0], pvt_imu.fxyz[1], pvt_imu.fxyz[2], pvt_imu.wxyz[0], pvt_imu.wxyz[1], pvt_imu.wxyz[2]
-			);
+			if (fIMU) fprintf(fIMU, "%10.4f,%10.4f,%10.4f,%10.4f,%10.4f,%10.4f,%10.4f\n", pvt_imu.timeimu, pvt_imu.fxyz[0]/ grav_WGS84, pvt_imu.fxyz[1]/ grav_WGS84, pvt_imu.fxyz[2]/ grav_WGS84, pvt_imu.wxyz[0]*R2D, pvt_imu.wxyz[1] * R2D, pvt_imu.wxyz[2] * R2D);
 
 			continue;
 		}
@@ -328,10 +334,17 @@ int process_ini_LC79D_v1(const char* fname)
 			if (type > 0 && fabs(pos[0]) > 1.0e-10 && fabs(pos[1]) > 1.0e-10)
 			{
 				if (!fRTS) fRTS = set_output_file(fname, "rts.nmea");
-				if (!fRTS_CSV) fRTS_CSV = set_output_file(fname, "rts.csv");
+				if (!fRTS_CSV)
+				{
+					fRTS_CSV = set_output_file(fname, "rts.csv");
+					if (fRTS_CSV)
+					{
+						fprintf(fRTS_CSV, "MCU solution time[s],latitude[deg],longitude[deg],ht[m],vn[m/s],ve[m/s],vd[ms/],roll[deg],pitch[deg],heading[deg],time different between solution time vs last IMU time[s]\n");
+					}
+				}
 
 				if (fRTS_CSV) fprintf(fRTS_CSV, "%10.3f,%14.9f,%14.9f,%10.4f,%10.4f,%10.4f,%10.4f,%10.4f,%10.4f,%10.4f,%i,%7.5f\n",
-					timeIMU, pos[0], pos[1], pos[2], vel[0], vel[1], vel[2], att[0], att[1], att[2], type, timeIMU - pvt_imu.timeimu);
+					timeIMU, pos[0]*R2D, pos[1]*R2D, pos[2], vel[0], vel[1], vel[2], att[0], att[1], att[2], type, timeIMU - pvt_imu.timeimu);
 
 				unsigned char ggaBuffer[255] = { 0 };
 				int len = outnmea_gga(ggaBuffer, timeIMU, 5, pos, 10, 1.0, 1.0);
@@ -356,57 +369,8 @@ int main(int argc, char** argv)
 {
 	if (argc < 2)
 	{
-		char buffer[255] = { 0 }, dirname[255] = { 0 }, imufname[255] = { 0 };
-		FILE* fINI = fopen("data.ini", "r");
-		unsigned long line = 0;
-		char axis[255] = { 0 };
-		char dname[255] = { 0 };
-		while (fINI != NULL && !feof(fINI))
-		{
-			memset(buffer, 0, sizeof(buffer));
-			fgets(buffer, sizeof(buffer), fINI);
-			if (strlen(buffer) < 1) continue;
-			if (buffer[0] == ';' || buffer[0] == '#') continue;
-			char* temp = strchr(buffer, '\n');
-			if (temp != NULL) temp[0] = '\0';
-
-			int type = 0;
-			char fname[255] = { 0 };
-			int num = sscanf(buffer, "%i,%[^\,]", &type, fname);
-			if (num < 2) continue;
-			switch (type) {
-			case 0: /* data directory */
-			{
-				if (strlen(fname) > 0)
-				{
-					memset(dname, 0, sizeof(dname));
-					strcpy(dname, fname);
-					if (dname[strlen(dname) - 1] != '\\' && dname[strlen(dname) - 1] != '/')
-						dname[strlen(dname)] = '\\';
-				}
-			} break;
-			case 1: /* GPS+IMU with LC79D data */
-			{
-				if (strlen(fname) > 0)
-				{
-					char filename[255] = { 0 };
-					if (fname[0] == '\\' || fname[0] == '/')
-						sprintf(filename, "%s%s", dname, fname + 1);
-					else
-						sprintf(filename, "%s%s", dname, fname);
-					process_ini_LC79D_v1(filename);
-				}
-			} break;
-			case 2: /* axis defintion */
-			{
-				strcpy(axis, fname);
-			} break;
-			default:
-				break;
-			}
-			++line;
-		}
-		if (fINI) fclose(fINI);
+		printf("help info\n");
+		printf("%s filename\n", argv[0]);
 	}
 	else
 	{
